@@ -65,6 +65,128 @@ const reportIcon = new L.Icon({
   shadowSize: [41, 41]
 });
 
+type LocationRisk = Pick<WeatherData, 'riskScore' | 'riskCategory'>;
+
+type CapabilityItem = {
+  title: string;
+  description: string;
+  icon: React.ComponentType<{ className?: string }>;
+  tone: string;
+};
+
+const PLATFORM_CAPABILITIES: CapabilityItem[] = [
+  {
+    title: 'Community Flood Reporting',
+    description: 'Citizens upload real-time flood images and ground reports so authorities can respond faster.',
+    icon: Camera,
+    tone: 'border-red-200 bg-gradient-to-br from-red-50 to-white'
+  },
+  {
+    title: 'Safe Shelter Network',
+    description: 'Residents can voluntarily register safe spaces in their homes for nearby high-risk communities.',
+    icon: Home,
+    tone: 'border-blue-200 bg-gradient-to-br from-blue-50 to-white'
+  },
+  {
+    title: 'Safest Route Navigation',
+    description: 'Evacuation paths prioritize lower flood exposure, not just shortest distance to shelter.',
+    icon: Navigation,
+    tone: 'border-emerald-200 bg-gradient-to-br from-emerald-50 to-white'
+  },
+  {
+    title: 'AI-Driven Prediction',
+    description: 'XGBoost-based prediction uses rainfall, drainage capacity, elevation, and historical flood trends.',
+    icon: Activity,
+    tone: 'border-violet-200 bg-gradient-to-br from-violet-50 to-white'
+  },
+  {
+    title: 'Multi-Source Data Integration',
+    description: 'Combines weather APIs, satellite imagery, drainage infrastructure inputs, and CCTV traffic feeds.',
+    icon: CloudRain,
+    tone: 'border-cyan-200 bg-gradient-to-br from-cyan-50 to-white'
+  },
+  {
+    title: 'Visual Risk Dashboard',
+    description: 'Color-coded flood risk zones in Green, Yellow, and Red for instant situational awareness.',
+    icon: BarChart3,
+    tone: 'border-amber-200 bg-gradient-to-br from-amber-50 to-white'
+  },
+  {
+    title: 'Community + Authority Collaboration',
+    description: 'Connects citizens, disaster teams, and administrators in one coordinated response workspace.',
+    icon: Users,
+    tone: 'border-slate-300 bg-gradient-to-br from-slate-50 to-white'
+  },
+  {
+    title: 'Proactive Disaster Response',
+    description: 'Prevention-first workflows reduce losses by predicting floods before severe damage occurs.',
+    icon: ShieldAlert,
+    tone: 'border-teal-200 bg-gradient-to-br from-teal-50 to-white'
+  }
+];
+
+const INTEGRATED_STREAMS = [
+  { source: 'Weather APIs', detail: 'Rainfall + humidity telemetry', status: 'Live' },
+  { source: 'Satellite Imagery', detail: 'Cloud and water spread tracking', status: 'Monitored' },
+  { source: 'Drainage Infrastructure', detail: 'Capacity and overflow indicators', status: 'Live' },
+  { source: 'CCTV Traffic Feeds', detail: 'Road accessibility and congestion', status: 'Monitored' }
+];
+
+function planarDistanceMeters(origin: [number, number], destination: [number, number]) {
+  const latDelta = (destination[0] - origin[0]) * 111000;
+  const avgLat = ((origin[0] + destination[0]) / 2) * (Math.PI / 180);
+  const lonDelta = (destination[1] - origin[1]) * 111000 * Math.cos(avgLat);
+  return Math.hypot(latDelta, lonDelta);
+}
+
+function scoreShelterSafety(
+  origin: [number, number],
+  shelter: SafeShelter,
+  riskCenter: [number, number],
+  riskScore: number
+) {
+  const shelterPoint: [number, number] = [shelter.lat, shelter.lon];
+  const travelDistance = planarDistanceMeters(origin, shelterPoint);
+  const shelterToCenterDistance = planarDistanceMeters(shelterPoint, riskCenter);
+
+  // Penalize shelters closer to flood center when risk is high, but still respect travel distance.
+  const riskPenalty = riskScore * (2200 / Math.max(shelterToCenterDistance, 180));
+  const capacityBias = 240 / Math.max(shelter.capacity, 1);
+  return travelDistance * (1 + riskPenalty) + capacityBias;
+}
+
+function buildSafeFirstRoute(
+  origin: [number, number],
+  destination: [number, number],
+  riskCenter: [number, number],
+  riskScore: number
+): [number, number][] {
+  if (riskScore < 0.45) {
+    return [origin, destination];
+  }
+
+  const midpoint: [number, number] = [
+    (origin[0] + destination[0]) / 2,
+    (origin[1] + destination[1]) / 2
+  ];
+
+  let escapeLat = midpoint[0] - riskCenter[0];
+  let escapeLng = midpoint[1] - riskCenter[1];
+
+  if (Math.abs(escapeLat) + Math.abs(escapeLng) < 0.0001) {
+    escapeLat = 0.018;
+    escapeLng = -0.012;
+  }
+
+  const detourStrength = riskScore > 0.7 ? 0.55 : 0.35;
+  const detourPoint: [number, number] = [
+    midpoint[0] + escapeLat * detourStrength,
+    midpoint[1] + escapeLng * detourStrength
+  ];
+
+  return [origin, detourPoint, destination];
+}
+
 function ChangeView({ center }: { center: [number, number] }) {
   const map = useMap();
   map.setView(center, map.getZoom());
@@ -102,7 +224,9 @@ export default function App() {
   // Evacuation Route State
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
   const [evacRoute, setEvacRoute] = useState<[number, number][] | null>(null);
-  const [clickedRisk, setClickedRisk] = useState<any>(null);
+  const [clickedRisk, setClickedRisk] = useState<LocationRisk | null>(null);
+  const [selectedEvacShelter, setSelectedEvacShelter] = useState<SafeShelter | null>(null);
+  const [routeMode, setRouteMode] = useState<'direct' | 'safe-detour' | null>(null);
 
   const fetchData = async (city: City) => {
     setLoading(true);
@@ -132,6 +256,11 @@ export default function App() {
   };
 
   useEffect(() => {
+    setUserLocation(null);
+    setEvacRoute(null);
+    setClickedRisk(null);
+    setSelectedEvacShelter(null);
+    setRouteMode(null);
     fetchData(selectedCity);
   }, [selectedCity]);
 
@@ -141,7 +270,14 @@ export default function App() {
       const res = await fetch('/api/predict', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...simValues, city: selectedCity.name })
+        body: JSON.stringify({
+          rainfall: simValues.rainfall,
+          humidity: simValues.humidity,
+          drainageCapacity: simValues.drainage,
+          elevation: simValues.elevation,
+          soilMoisture: simValues.soilMoisture,
+          city: selectedCity.name
+        })
       });
       const data = await res.json();
       setWeather(prev => prev ? { ...prev, ...data, isSimulation: true } : data);
@@ -150,6 +286,26 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    if (file.size > 4 * 1024 * 1024) {
+      alert('Please upload an image smaller than 4 MB.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setReportForm(prev => ({ ...prev, imageUrl: reader.result }));
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const submitReport = async (e: React.FormEvent) => {
@@ -194,8 +350,12 @@ export default function App() {
   };
 
   const handleMapClick = async (lat: number, lng: number) => {
-    setUserLocation([lat, lng]);
-    
+    const origin: [number, number] = [lat, lng];
+    setUserLocation(origin);
+    setClickedRisk(null);
+
+    let locationRiskScore = weather?.riskScore || 0.25;
+
     // Fetch prediction for clicked location
     try {
       const res = await fetch('/api/predict', {
@@ -211,25 +371,40 @@ export default function App() {
         })
       });
       const data = await res.json();
-      // We could store this in state to show in the popup
       setClickedRisk(data);
+      if (typeof data.riskScore === 'number') {
+        locationRiskScore = data.riskScore;
+      }
     } catch (err) {
       console.error(err);
     }
 
-    // Find nearest shelter
-    if (shelters.length > 0) {
-      let nearest = shelters[0];
-      let minDist = Math.pow(lat - nearest.lat, 2) + Math.pow(lng - nearest.lon, 2);
-      for (let i = 1; i < shelters.length; i++) {
-        const dist = Math.pow(lat - shelters[i].lat, 2) + Math.pow(lng - shelters[i].lon, 2);
-        if (dist < minDist) {
-          minDist = dist;
-          nearest = shelters[i];
-        }
-      }
-      setEvacRoute([[lat, lng], [nearest.lat, nearest.lon]]);
+    if (shelters.length === 0) {
+      setEvacRoute(null);
+      setSelectedEvacShelter(null);
+      setRouteMode(null);
+      return;
     }
+
+    const riskCenter: [number, number] = [selectedCity.lat, selectedCity.lon];
+    const rankedShelters = shelters
+      .map(shelter => ({
+        shelter,
+        score: scoreShelterSafety(origin, shelter, riskCenter, locationRiskScore)
+      }))
+      .sort((a, b) => a.score - b.score);
+
+    const safestShelter = rankedShelters[0]?.shelter;
+    if (!safestShelter) {
+      return;
+    }
+
+    const destination: [number, number] = [safestShelter.lat, safestShelter.lon];
+    const safeRoute = buildSafeFirstRoute(origin, destination, riskCenter, locationRiskScore);
+
+    setSelectedEvacShelter(safestShelter);
+    setEvacRoute(safeRoute);
+    setRouteMode(safeRoute.length > 2 ? 'safe-detour' : 'direct');
   };
 
   const chartData = useMemo(() => {
@@ -239,6 +414,8 @@ export default function App() {
       risk: (h.rainfall_mm / 150) * 100
     }));
   }, [historical]);
+
+  const reportImageLinkValue = reportForm.imageUrl.startsWith('data:image') ? '' : reportForm.imageUrl;
 
   return (
     <div className="min-h-screen flex flex-col font-sans bg-slate-50 text-slate-900">
@@ -250,7 +427,7 @@ export default function App() {
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-tight">Urban Flood AI Monitoring System</h1>
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em]">Predictive Early Warning</p>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em]">Predictive Early Warning + Community Coordination</p>
           </div>
         </div>
         
@@ -343,17 +520,84 @@ export default function App() {
           {/* OVERVIEW TAB */}
           {activeTab === 'overview' && (
             <div className="space-y-6 max-w-7xl mx-auto">
+              <section className="relative overflow-hidden rounded-3xl border border-cyan-200 bg-gradient-to-br from-slate-900 via-cyan-950 to-slate-900 text-white p-8 shadow-lg">
+                <div className="absolute -top-14 -right-10 h-56 w-56 rounded-full bg-cyan-300/20 blur-3xl" />
+                <div className="absolute -bottom-16 -left-10 h-52 w-52 rounded-full bg-emerald-300/20 blur-3xl" />
+                <div className="relative space-y-4">
+                  <p className="text-xs font-bold uppercase tracking-[0.2em] text-cyan-100">Proactive Disaster Response</p>
+                  <h2 className="text-3xl md:text-4xl font-black leading-tight max-w-4xl">
+                    Predict floods early, coordinate citizens and teams, and evacuate through safer routes.
+                  </h2>
+                  <p className="max-w-3xl text-sm md:text-base text-cyan-50/90">
+                    UrbanFlood AI unifies live conditions, community intelligence, and authority action in one shared operational view.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 pt-2">
+                    {INTEGRATED_STREAMS.map(stream => (
+                      <div key={stream.source} className="rounded-xl border border-cyan-100/20 bg-white/10 p-3 backdrop-blur-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-bold uppercase tracking-wider text-cyan-50">{stream.source}</p>
+                          <span className={cn(
+                            'rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider',
+                            stream.status === 'Live' ? 'bg-emerald-300/25 text-emerald-100' : 'bg-cyan-300/20 text-cyan-100'
+                          )}>
+                            {stream.status}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-cyan-100/85">{stream.detail}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                {PLATFORM_CAPABILITIES.map((capability, index) => {
+                  const Icon = capability.icon;
+                  return (
+                    <article
+                      key={capability.title}
+                      className={cn('capability-card rounded-2xl border p-5 shadow-sm', capability.tone)}
+                      style={{ animationDelay: `${index * 70}ms` }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-xl bg-white p-2.5 text-slate-700 shadow-sm border border-slate-100">
+                          <Icon className="w-5 h-5" />
+                        </div>
+                        <h3 className="text-sm font-black text-slate-900 leading-tight">{capability.title}</h3>
+                      </div>
+                      <p className="mt-3 text-xs leading-relaxed text-slate-600">{capability.description}</p>
+                    </article>
+                  );
+                })}
+              </section>
+
               {/* Map Section */}
               <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden h-[500px] relative">
-                <div className="absolute top-4 right-4 z-[1000] bg-white/90 backdrop-blur p-4 rounded-2xl shadow-lg border border-slate-200 w-64">
+                <div className="absolute top-4 right-4 z-[1000] bg-white/90 backdrop-blur p-4 rounded-2xl shadow-lg border border-slate-200 w-72 max-w-[calc(100%-2rem)]">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Map Legend</h3>
                   <div className="space-y-2 text-sm font-medium text-slate-700">
                     <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-red-500 opacity-50" /> High Risk Zone</div>
                     <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-yellow-500 opacity-50" /> Alert Zone</div>
+                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500 opacity-50" /> Lower Risk Zone</div>
                     <div className="flex items-center gap-2"><img src={reportIcon.options.iconUrl} className="w-4 h-6" alt="Report" /> Flood Report</div>
                     <div className="flex items-center gap-2"><img src={shelterIcon.options.iconUrl} className="w-4 h-6" alt="Shelter" /> Safe Shelter</div>
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-3 italic">Click anywhere on the map to find the nearest evacuation route.</p>
+                  <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-2.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Safe Route Engine</p>
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      {routeMode === 'safe-detour'
+                        ? 'Detour activated to reduce flood exposure before reaching shelter.'
+                        : routeMode === 'direct'
+                        ? 'Direct safe corridor selected for current location.'
+                        : 'Click anywhere on the map to generate the safest evacuation route.'}
+                    </p>
+                    {selectedEvacShelter && (
+                      <p className="text-[10px] mt-1.5 font-semibold text-slate-700">
+                        Shelter Target: {selectedEvacShelter.address}
+                      </p>
+                    )}
+                  </div>
                 </div>
                 
                 <MapContainer center={[selectedCity.lat, selectedCity.lon]} zoom={12} style={{ height: '100%', width: '100%' }} zoomControl={false}>
@@ -380,6 +624,13 @@ export default function App() {
                           <h4 className="font-bold text-red-600">Flood Report</h4>
                           <p className="text-xs mt-1"><strong>Water Level:</strong> {report.water_level}</p>
                           <p className="text-xs mt-1">{report.description}</p>
+                          {report.image_url && (
+                            <img
+                              src={report.image_url}
+                              alt="Citizen flood report"
+                              className="mt-2 h-24 w-full rounded-lg object-cover border border-slate-200"
+                            />
+                          )}
                         </div>
                       </Popup>
                     </Marker>
@@ -417,7 +668,14 @@ export default function App() {
                                   {clickedRisk.riskCategory} Risk
                                 </div>
                                 <p className="text-xs text-slate-600">Probability: {(clickedRisk.riskScore * 100).toFixed(0)}%</p>
-                                <p className="text-[10px] text-blue-600 mt-2 font-semibold">Evacuation route mapped to nearest shelter.</p>
+                                <p className="text-[10px] text-teal-700 mt-2 font-semibold">
+                                  {routeMode === 'safe-detour'
+                                    ? 'Safe detour mapped to lower-risk shelter access.'
+                                    : 'Direct safe corridor mapped to shelter.'}
+                                </p>
+                                {selectedEvacShelter && (
+                                  <p className="text-[10px] text-slate-500 mt-1">Shelter: {selectedEvacShelter.address}</p>
+                                )}
                               </>
                             ) : (
                               <p className="text-xs text-slate-500">Calculating risk...</p>
@@ -425,7 +683,12 @@ export default function App() {
                           </div>
                         </Popup>
                       </Marker>
-                      <Polyline positions={evacRoute} color="#3b82f6" weight={4} dashArray="10, 10" />
+                      <Polyline
+                        positions={evacRoute}
+                        color={routeMode === 'safe-detour' ? '#0d9488' : '#2563eb'}
+                        weight={5}
+                        dashArray={routeMode === 'safe-detour' ? '12, 8' : undefined}
+                      />
                     </>
                   )}
                 </MapContainer>
@@ -461,6 +724,11 @@ export default function App() {
                     "bg-emerald-50 border-emerald-200 text-emerald-700"
                   )}>
                     {weather?.riskCategory || 'Low'} Risk
+                  </div>
+                  <div className="mt-5 grid grid-cols-3 gap-2 w-full text-[10px] font-bold uppercase tracking-wider">
+                    <div className="rounded-lg bg-emerald-50 text-emerald-700 py-2">Green</div>
+                    <div className="rounded-lg bg-yellow-50 text-yellow-700 py-2">Yellow</div>
+                    <div className="rounded-lg bg-red-50 text-red-700 py-2">Red</div>
                   </div>
                 </div>
 
@@ -514,8 +782,8 @@ export default function App() {
                 <div className="flex items-center gap-3 mb-6">
                   <div className="bg-red-100 p-3 rounded-xl text-red-600"><Camera className="w-6 h-6" /></div>
                   <div>
-                    <h2 className="text-xl font-bold text-slate-900">Report a Flood</h2>
-                    <p className="text-sm text-slate-500">Help authorities by reporting incidents.</p>
+                    <h2 className="text-xl font-bold text-slate-900">Community Flood Reporting</h2>
+                    <p className="text-sm text-slate-500">Share real-time images and ground reports for faster action.</p>
                   </div>
                 </div>
                 <form onSubmit={submitReport} className="space-y-5">
@@ -542,8 +810,31 @@ export default function App() {
                       required
                     />
                   </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">Flood Image (Optional)</label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageFileChange}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white hover:file:bg-slate-700"
+                    />
+                    <input
+                      type="url"
+                      className="mt-3 w-full bg-slate-50 border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Or paste image URL"
+                      value={reportImageLinkValue}
+                      onChange={e => setReportForm({ ...reportForm, imageUrl: e.target.value })}
+                    />
+                    {reportForm.imageUrl && (
+                      <img
+                        src={reportForm.imageUrl}
+                        alt="Flood upload preview"
+                        className="mt-3 h-28 w-full rounded-xl border border-slate-200 object-cover"
+                      />
+                    )}
+                  </div>
                   <button type="submit" className="w-full bg-red-600 text-white font-bold py-3 rounded-xl hover:bg-red-700 transition-colors">
-                    Submit Report
+                    Submit Community Report
                   </button>
                 </form>
               </div>
@@ -617,7 +908,7 @@ export default function App() {
                   <div className="bg-slate-900 p-3 rounded-xl text-white"><Settings className="w-6 h-6" /></div>
                   <div>
                     <h2 className="text-xl font-bold text-slate-900">Flood Prediction Simulation</h2>
-                    <p className="text-sm text-slate-500">Adjust parameters to simulate XGBoost model predictions.</p>
+                    <p className="text-sm text-slate-500">Adjust rainfall, humidity, drainage capacity, elevation, and soil moisture to simulate XGBoost predictions.</p>
                   </div>
                 </div>
 
