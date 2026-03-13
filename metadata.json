@@ -1,0 +1,7 @@
+{
+  "name": "Remix: UrbanFlood AI",
+  "description": "AI-driven urban flood prediction and early warning system using real-time weather data and ML models.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
