@@ -31,7 +31,7 @@ import {
   Area
 } from 'recharts';
 import { format } from 'date-fns';
-import { WeatherData, HistoricalData, City, CITIES, FloodReport, SafeShelter, EmergencyAlert, AnalyticsData } from './types';
+import { WeatherData, HistoricalData, City, CITIES, FloodReport, SafeShelter, EmergencyAlert, AnalyticsData, ModelMetricsData, LiveFeedData } from './types';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -67,11 +67,33 @@ const reportIcon = new L.Icon({
 
 type LocationRisk = Pick<WeatherData, 'riskScore' | 'riskCategory'>;
 
+type AppTab = 'overview' | 'citizen' | 'admin';
+
+const DASHBOARD_SECTIONS = {
+  overviewHero: 'overview-hero',
+  overviewCapabilities: 'overview-capabilities',
+  overviewMap: 'overview-map',
+  overviewAnalytics: 'overview-analytics',
+  citizenReport: 'citizen-report',
+  citizenShelter: 'citizen-shelter',
+  adminMetrics: 'admin-metrics',
+  adminSimulation: 'admin-simulation'
+} as const;
+
+type DashboardSectionId = (typeof DASHBOARD_SECTIONS)[keyof typeof DASHBOARD_SECTIONS];
+
+type DashboardRoute = {
+  tab: AppTab;
+  sectionId: DashboardSectionId;
+  actionLabel: string;
+};
+
 type CapabilityItem = {
   title: string;
   description: string;
   icon: React.ComponentType<{ className?: string }>;
   tone: string;
+  route: DashboardRoute;
 };
 
 const PLATFORM_CAPABILITIES: CapabilityItem[] = [
@@ -79,57 +101,97 @@ const PLATFORM_CAPABILITIES: CapabilityItem[] = [
     title: 'Community Flood Reporting',
     description: 'Citizens upload real-time flood images and ground reports so authorities can respond faster.',
     icon: Camera,
-    tone: 'border-red-200 bg-gradient-to-br from-red-50 to-white'
+    tone: 'border-red-200 bg-gradient-to-br from-red-50 to-white',
+    route: {
+      tab: 'citizen',
+      sectionId: DASHBOARD_SECTIONS.citizenReport,
+      actionLabel: 'Open reporting form'
+    }
   },
   {
     title: 'Safe Shelter Network',
     description: 'Residents can voluntarily register safe spaces in their homes for nearby high-risk communities.',
     icon: Home,
-    tone: 'border-blue-200 bg-gradient-to-br from-blue-50 to-white'
+    tone: 'border-blue-200 bg-gradient-to-br from-blue-50 to-white',
+    route: {
+      tab: 'citizen',
+      sectionId: DASHBOARD_SECTIONS.citizenShelter,
+      actionLabel: 'Open shelter registration'
+    }
   },
   {
     title: 'Safest Route Navigation',
     description: 'Evacuation paths prioritize lower flood exposure, not just shortest distance to shelter.',
     icon: Navigation,
-    tone: 'border-emerald-200 bg-gradient-to-br from-emerald-50 to-white'
+    tone: 'border-emerald-200 bg-gradient-to-br from-emerald-50 to-white',
+    route: {
+      tab: 'overview',
+      sectionId: DASHBOARD_SECTIONS.overviewMap,
+      actionLabel: 'Open evacuation map'
+    }
   },
   {
     title: 'AI-Driven Prediction',
     description: 'XGBoost-based prediction uses rainfall, drainage capacity, elevation, and historical flood trends.',
     icon: Activity,
-    tone: 'border-violet-200 bg-gradient-to-br from-violet-50 to-white'
+    tone: 'border-violet-200 bg-gradient-to-br from-violet-50 to-white',
+    route: {
+      tab: 'admin',
+      sectionId: DASHBOARD_SECTIONS.adminSimulation,
+      actionLabel: 'Open AI simulation'
+    }
   },
   {
     title: 'Multi-Source Data Integration',
     description: 'Combines weather APIs, satellite imagery, drainage infrastructure inputs, and CCTV traffic feeds.',
     icon: CloudRain,
-    tone: 'border-cyan-200 bg-gradient-to-br from-cyan-50 to-white'
+    tone: 'border-cyan-200 bg-gradient-to-br from-cyan-50 to-white',
+    route: {
+      tab: 'overview',
+      sectionId: DASHBOARD_SECTIONS.overviewHero,
+      actionLabel: 'View integrated feeds'
+    }
   },
   {
     title: 'Visual Risk Dashboard',
     description: 'Color-coded flood risk zones in Green, Yellow, and Red for instant situational awareness.',
     icon: BarChart3,
-    tone: 'border-amber-200 bg-gradient-to-br from-amber-50 to-white'
+    tone: 'border-amber-200 bg-gradient-to-br from-amber-50 to-white',
+    route: {
+      tab: 'overview',
+      sectionId: DASHBOARD_SECTIONS.overviewAnalytics,
+      actionLabel: 'Open risk dashboard'
+    }
   },
   {
     title: 'Community + Authority Collaboration',
     description: 'Connects citizens, disaster teams, and administrators in one coordinated response workspace.',
     icon: Users,
-    tone: 'border-slate-300 bg-gradient-to-br from-slate-50 to-white'
+    tone: 'border-slate-300 bg-gradient-to-br from-slate-50 to-white',
+    route: {
+      tab: 'admin',
+      sectionId: DASHBOARD_SECTIONS.adminMetrics,
+      actionLabel: 'Open response metrics'
+    }
   },
   {
     title: 'Proactive Disaster Response',
     description: 'Prevention-first workflows reduce losses by predicting floods before severe damage occurs.',
     icon: ShieldAlert,
-    tone: 'border-teal-200 bg-gradient-to-br from-teal-50 to-white'
+    tone: 'border-teal-200 bg-gradient-to-br from-teal-50 to-white',
+    route: {
+      tab: 'overview',
+      sectionId: DASHBOARD_SECTIONS.overviewHero,
+      actionLabel: 'Back to control center'
+    }
   }
 ];
 
 const INTEGRATED_STREAMS = [
-  { source: 'Weather APIs', detail: 'Rainfall + humidity telemetry', status: 'Live' },
-  { source: 'Satellite Imagery', detail: 'Cloud and water spread tracking', status: 'Monitored' },
-  { source: 'Drainage Infrastructure', detail: 'Capacity and overflow indicators', status: 'Live' },
-  { source: 'CCTV Traffic Feeds', detail: 'Road accessibility and congestion', status: 'Monitored' }
+  { source: 'Weather APIs', detail: 'Rainfall + humidity telemetry' },
+  { source: 'Satellite Imagery', detail: 'Cloud and water spread tracking' },
+  { source: 'Drainage Infrastructure', detail: 'Capacity and overflow indicators' },
+  { source: 'CCTV Traffic Feeds', detail: 'Road accessibility and congestion' }
 ];
 
 function planarDistanceMeters(origin: [number, number], destination: [number, number]) {
@@ -210,9 +272,12 @@ export default function App() {
   const [shelters, setShelters] = useState<SafeShelter[]>([]);
   const [alerts, setAlerts] = useState<EmergencyAlert[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [modelMetrics, setModelMetrics] = useState<ModelMetricsData | null>(null);
+  const [liveFeed, setLiveFeed] = useState<LiveFeedData | null>(null);
   
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'citizen' | 'admin'>('overview');
+  const [activeTab, setActiveTab] = useState<AppTab>('overview');
+  const [pendingSectionId, setPendingSectionId] = useState<DashboardSectionId | null>(null);
   
   // Admin Simulation State
   const [simValues, setSimValues] = useState({ rainfall: 120, humidity: 85, drainage: 0.3, elevation: 10, soilMoisture: 60 });
@@ -228,25 +293,86 @@ export default function App() {
   const [selectedEvacShelter, setSelectedEvacShelter] = useState<SafeShelter | null>(null);
   const [routeMode, setRouteMode] = useState<'direct' | 'safe-detour' | null>(null);
 
+  const integratedStreams = useMemo(() => {
+    const freshness = liveFeed?.freshnessMinutes;
+    const freshnessStatus = typeof freshness === 'number' && freshness <= 20 ? 'Live' : 'Delayed';
+    const liveSource = liveFeed?.source ?? analytics?.liveSource ?? 'syncing';
+    const modelAccuracy = modelMetrics?.accuracy ?? analytics?.modelAccuracy ?? null;
+
+    return [
+      {
+        source: 'Weather APIs',
+        detail: weather
+          ? `Rain ${weather.rain.toFixed(1)}mm | Humidity ${weather.humidity.toFixed(0)}% | Source ${liveSource}`
+          : 'Rainfall + humidity telemetry',
+        status: freshnessStatus,
+      },
+      {
+        source: 'Satellite Imagery',
+        detail: 'Cloud and water spread tracking',
+        status: 'Monitored',
+      },
+      {
+        source: 'Drainage Infrastructure',
+        detail:
+          weather?.drainage != null
+            ? `Estimated drainage capacity ${(weather.drainage * 100).toFixed(0)}%`
+            : 'Capacity and overflow indicators',
+        status: 'Monitored',
+      },
+      {
+        source: 'ML Accuracy',
+        detail:
+          modelAccuracy != null
+            ? `Model accuracy ${(modelAccuracy * 100).toFixed(1)}% (${modelMetrics?.sampleSize ?? 0} samples)`
+            : 'Model validation feed warming up',
+        status: modelAccuracy != null ? 'Live' : 'Delayed',
+      },
+    ];
+  }, [liveFeed, analytics?.liveSource, analytics?.modelAccuracy, modelMetrics, weather]);
+
   const fetchData = async (city: City) => {
     setLoading(true);
     try {
-      const [weatherRes, histRes, reportsRes, sheltersRes, alertsRes, analyticsRes] = await Promise.all([
+      const [weatherRes, histRes, reportsRes, sheltersRes, alertsRes, analyticsRes, metricsRes, liveFeedRes] = await Promise.all([
         fetch(`/api/weather?city=${city.name}&lat=${city.lat}&lon=${city.lon}`),
         fetch(`/api/historical?city=${city.name}`),
         fetch('/api/reports'),
         fetch('/api/shelters'),
         fetch('/api/alerts'),
-        fetch('/api/analytics')
+        fetch('/api/analytics'),
+        fetch(`/api/model/metrics?city=${city.name}`),
+        fetch(`/api/live-feed?city=${city.name}`)
       ]);
-      
-      const weatherData = await weatherRes.json();
+
+      const [
+        weatherData,
+        historicalData,
+        reportsData,
+        sheltersData,
+        alertsData,
+        analyticsData,
+        metricsData,
+        liveFeedData,
+      ] = await Promise.all([
+        weatherRes.json(),
+        histRes.json(),
+        reportsRes.json(),
+        sheltersRes.json(),
+        alertsRes.json(),
+        analyticsRes.json(),
+        metricsRes.json(),
+        liveFeedRes.json(),
+      ]);
+
       setWeather(weatherData);
-      setHistorical(await histRes.json());
-      setReports(await reportsRes.json());
-      setShelters(await sheltersRes.json());
-      setAlerts(await alertsRes.json());
-      setAnalytics(await analyticsRes.json());
+      setHistorical(historicalData);
+      setReports(reportsData);
+      setShelters(sheltersData);
+      setAlerts(alertsData);
+      setAnalytics(analyticsData);
+      setModelMetrics(metricsData);
+      setLiveFeed(liveFeedData);
       
     } catch (err) {
       console.error(err);
@@ -417,6 +543,42 @@ export default function App() {
 
   const reportImageLinkValue = reportForm.imageUrl.startsWith('data:image') ? '' : reportForm.imageUrl;
 
+  const scrollToDashboardSection = (sectionId: DashboardSectionId) => {
+    const section = document.getElementById(sectionId);
+    if (!section) {
+      return false;
+    }
+
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return true;
+  };
+
+  const routeToDashboardSection = (tab: AppTab, sectionId: DashboardSectionId) => {
+    if (activeTab !== tab) {
+      setActiveTab(tab);
+      setPendingSectionId(sectionId);
+      return;
+    }
+
+    if (!scrollToDashboardSection(sectionId)) {
+      setPendingSectionId(sectionId);
+    }
+  };
+
+  useEffect(() => {
+    if (!pendingSectionId) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (scrollToDashboardSection(pendingSectionId)) {
+        setPendingSectionId(null);
+      }
+    }, 140);
+
+    return () => window.clearTimeout(timer);
+  }, [activeTab, pendingSectionId]);
+
   return (
     <div className="min-h-screen flex flex-col font-sans bg-slate-50 text-slate-900">
       {/* Top Navigation Bar */}
@@ -473,19 +635,28 @@ export default function App() {
 
           <div className="p-4 flex flex-col gap-2">
             <button 
-              onClick={() => setActiveTab('overview')}
+              onClick={() => {
+                setActiveTab('overview');
+                setPendingSectionId(null);
+              }}
               className={cn("flex items-center gap-3 p-3 rounded-xl font-semibold transition-all text-left", activeTab === 'overview' ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-50")}
             >
               <MapIcon className="w-5 h-5" /> Real-Time Map & Analytics
             </button>
             <button 
-              onClick={() => setActiveTab('citizen')}
+              onClick={() => {
+                setActiveTab('citizen');
+                setPendingSectionId(null);
+              }}
               className={cn("flex items-center gap-3 p-3 rounded-xl font-semibold transition-all text-left", activeTab === 'citizen' ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-50")}
             >
               <Users className="w-5 h-5" /> Citizen Portal
             </button>
             <button 
-              onClick={() => setActiveTab('admin')}
+              onClick={() => {
+                setActiveTab('admin');
+                setPendingSectionId(null);
+              }}
               className={cn("flex items-center gap-3 p-3 rounded-xl font-semibold transition-all text-left", activeTab === 'admin' ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-50")}
             >
               <ShieldAlert className="w-5 h-5" /> Admin Console
@@ -533,13 +704,17 @@ export default function App() {
                   </p>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 pt-2">
-                    {INTEGRATED_STREAMS.map(stream => (
+                    {integratedStreams.map(stream => (
                       <div key={stream.source} className="rounded-xl border border-cyan-100/20 bg-white/10 p-3 backdrop-blur-sm">
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-xs font-bold uppercase tracking-wider text-cyan-50">{stream.source}</p>
                           <span className={cn(
                             'rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider',
-                            stream.status === 'Live' ? 'bg-emerald-300/25 text-emerald-100' : 'bg-cyan-300/20 text-cyan-100'
+                            stream.status === 'Live'
+                              ? 'bg-emerald-300/25 text-emerald-100'
+                              : stream.status === 'Delayed'
+                              ? 'bg-amber-300/25 text-amber-100'
+                              : 'bg-cyan-300/20 text-cyan-100'
                           )}>
                             {stream.status}
                           </span>
@@ -895,11 +1070,52 @@ export default function App() {
           {activeTab === 'admin' && (
             <div className="max-w-7xl mx-auto space-y-8">
               {/* Admin Metrics */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 <StatCard label="Total Reports" value={analytics?.totalReports.toString() || '0'} icon={AlertTriangle} color="text-red-500" />
                 <StatCard label="Active Flood Zones" value={analytics?.activeFloodZones.toString() || '0'} icon={MapIcon} color="text-orange-500" />
                 <StatCard label="Safe Shelters" value={analytics?.numberOfShelters.toString() || '0'} icon={Home} color="text-emerald-500" />
                 <StatCard label="Evacuated Users" value={analytics?.evacuatedUsers.toString() || '0'} icon={Users} color="text-blue-500" />
+                <StatCard
+                  label="Model Accuracy"
+                  value={
+                    modelMetrics?.accuracy != null
+                      ? `${(modelMetrics.accuracy * 100).toFixed(1)}%`
+                      : analytics?.modelAccuracy != null
+                      ? `${(analytics.modelAccuracy * 100).toFixed(1)}%`
+                      : 'N/A'
+                  }
+                  icon={Activity}
+                  color="text-violet-500"
+                />
+                <StatCard
+                  label="Live Feed Freshness"
+                  value={
+                    liveFeed?.freshnessMinutes != null
+                      ? `${liveFeed.freshnessMinutes} min`
+                      : analytics?.liveDataFreshnessMinutes != null
+                      ? `${analytics.liveDataFreshnessMinutes} min`
+                      : 'N/A'
+                  }
+                  icon={CloudRain}
+                  color="text-cyan-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Model Version</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-800">{modelMetrics?.modelVersion || analytics?.modelVersion || 'heuristic-v2'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Latest Evaluation</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-800">
+                    {modelMetrics?.evaluatedAt ? format(new Date(modelMetrics.evaluatedAt), 'PPpp') : 'Pending'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Primary Data Source</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-800">{liveFeed?.source || analytics?.liveSource || 'syncing'}</p>
+                </div>
               </div>
 
               {/* Simulation Panel */}

@@ -57,6 +57,48 @@ export interface AnalyticsData {
   activeFloodZones: number;
   numberOfShelters: number;
   evacuatedUsers: number;
+  modelAccuracy?: number | null;
+  modelF1?: number | null;
+  modelVersion?: string | null;
+  liveDataFreshnessMinutes?: number | null;
+  liveSource?: string | null;
+}
+
+export interface ModelMetricsData {
+  city: string;
+  sampleSize: number;
+  accuracy: number;
+  precision: number;
+  recall: number;
+  f1: number;
+  confusionMatrix: {
+    tp: number;
+    tn: number;
+    fp: number;
+    fn: number;
+  };
+  modelVersion: string;
+  evaluatedAt: string;
+}
+
+export interface LiveFeedSnapshot {
+  fetched_at: string;
+  city: string;
+  temp: number;
+  humidity: number;
+  wind: number;
+  rain: number;
+  drainage: number;
+  risk_score: number;
+  risk_category: 'Low' | 'Medium' | 'High';
+  source: string;
+}
+
+export interface LiveFeedData {
+  city: string;
+  source: string | null;
+  freshnessMinutes: number | null;
+  snapshots: LiveFeedSnapshot[];
 }
 
 export interface City {

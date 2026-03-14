@@ -1,0 +1,17 @@
+{
+  "dataset": "flood_risk_dataset_india.csv",
+  "target_column": "Flood Occurred",
+  "sample_size": 10000,
+  "train_size": 8000,
+  "test_size": 2000,
+  "accuracy": 0.5115,
+  "precision": 0.5168,
+  "recall": 0.5163,
+  "f1_score": 0.5166,
+  "confusion_matrix": {
+    "tn": 501,
+    "fp": 488,
+    "fn": 489,
+    "tp": 522
+  }
+}
